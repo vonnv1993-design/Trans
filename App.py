@@ -5,8 +5,6 @@ import json
 from datetime import datetime
 import time
 import io
-import base64
-from audio_recorder_streamlit import audio_recorder
 
 # Page configuration
 st.set_page_config(
@@ -94,6 +92,14 @@ st.markdown("""
         font-size: 0.85rem;
         font-weight: bold;
     }
+    .upload-box {
+        border: 2px dashed #1f77b4;
+        padding: 30px;
+        border-radius: 10px;
+        text-align: center;
+        background-color: #f8f9fa;
+        margin: 20px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -126,12 +132,12 @@ if 'summary_text' not in st.session_state:
     st.session_state.summary_text = ""
 if 'audio_history' not in st.session_state:
     st.session_state.audio_history = []
-if 'continuous_mode' not in st.session_state:
-    st.session_state.continuous_mode = False
 if 'current_source_lang' not in st.session_state:
     st.session_state.current_source_lang = ""
 if 'current_target_lang' not in st.session_state:
     st.session_state.current_target_lang = ""
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
 
 def call_llm_api(prompt, system_prompt):
     """Call the LLM API for translation or summarization"""
@@ -229,6 +235,77 @@ def detect_language(text):
     result = call_llm_api(user_prompt, system_prompt).strip()
     return result if result in ['Vietnamese', 'English'] else 'English'
 
+def process_audio_file(audio_file, source_lang_option, target_lang_option, enable_summary, summary_language):
+    """Process uploaded audio file"""
+    try:
+        # Read audio bytes
+        audio_bytes = audio_file.read()
+        
+        # Transcribe
+        with st.spinner("🔄 Transcribing audio..."):
+            transcription = transcribe_audio(audio_bytes)
+            st.session_state.transcribed_text = transcription
+        
+        if transcription and not transcription.startswith("Error"):
+            # Determine languages
+            if source_lang_option == "Auto-detect":
+                detected_lang = detect_language(transcription)
+                source_lang = detected_lang
+                target_lang = "English" if detected_lang == "Vietnamese" else "Vietnamese"
+                st.info(f"🔍 Detected language: {source_lang}")
+            elif source_lang_option == "Vietnamese → English":
+                source_lang = "Vietnamese"
+                target_lang = "English"
+            else:
+                source_lang = "English"
+                target_lang = "Vietnamese"
+            
+            st.session_state.current_source_lang = source_lang
+            st.session_state.current_target_lang = target_lang
+            
+            # Translate
+            with st.spinner(f"🔄 Translating to {target_lang}..."):
+                translation = translate_text(transcription, source_lang, target_lang)
+                st.session_state.translated_text = translation
+            
+            # Summarize if enabled
+            if enable_summary:
+                with st.spinner("📋 Generating summary..."):
+                    if summary_language == "Same as target language":
+                        summary = summarize_text(translation, target_lang)
+                    elif summary_language == "Same as source language":
+                        summary = summarize_text(transcription, source_lang)
+                    else:
+                        summary_source = summarize_text(transcription, source_lang)
+                        summary_target = summarize_text(translation, target_lang)
+                        summary = f"**Summary in {source_lang}:**\n{summary_source}\n\n**Summary in {target_lang}:**\n{summary_target}"
+                    st.session_state.summary_text = summary
+            
+            # Add to history
+            history_item = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'transcription': transcription,
+                'translation': translation,
+                'source_lang': source_lang,
+                'target_lang': target_lang,
+                'success': True
+            }
+            st.session_state.audio_history.append(history_item)
+            
+            return True, "Processing completed successfully!"
+        else:
+            error_msg = f"Transcription failed: {transcription}"
+            history_item = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'error': transcription,
+                'success': False
+            }
+            st.session_state.audio_history.append(history_item)
+            return False, error_msg
+    
+    except Exception as e:
+        return False, f"Error processing audio: {str(e)}"
+
 # Sidebar configuration
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -236,7 +313,7 @@ with st.sidebar:
     # Mode selection
     mode = st.radio(
         "Input Mode",
-        ["🎙️ Voice Recording", "⌨️ Text Input"],
+        ["🎙️ Upload Audio File", "⌨️ Text Input"],
         index=0
     )
     
@@ -271,14 +348,19 @@ with st.sidebar:
     st.divider()
     
     st.markdown("### 📚 Instructions")
-    if mode == "🎙️ Voice Recording":
+    if mode == "🎙️ Upload Audio File":
         st.markdown("""
-        1. Click microphone to start recording
-        2. Speak clearly in your language
-        3. Click again to stop recording
-        4. Transcription appears automatically
-        5. Translation follows transcription
-        6. Export results as needed
+        **Supported formats:**
+        - WAV, MP3, M4A, OGG
+        - Max size: 50MB
+        - Recommended: Clear audio, minimal background noise
+        
+        **Steps:**
+        1. Record audio on your device
+        2. Upload the audio file
+        3. Wait for transcription
+        4. View translation & summary
+        5. Export results
         """)
     else:
         st.markdown("""
@@ -298,113 +380,80 @@ with st.sidebar:
         st.metric("Successful Translations", successful)
 
 # Main content based on mode
-if mode == "🎙️ Voice Recording":
-    st.subheader("🎤 Voice Recording & Translation")
+if mode == "🎙️ Upload Audio File":
+    st.subheader("🎤 Audio File Upload & Translation")
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.markdown("### 🎙️ Record Your Voice")
-        st.info("Click the microphone button below to start/stop recording")
+        st.markdown("### 📁 Upload Audio File")
         
-        # Audio recorder
-        audio_bytes = audio_recorder(
-            text="Click to record",
-            recording_color="#ff4b4b",
-            neutral_color="#1f77b4",
-            icon_name="microphone",
-            icon_size="3x",
-            pause_threshold=2.0,
-            sample_rate=44100
+        # File uploader
+        uploaded_file = st.file_uploader(
+            "Choose an audio file",
+            type=['wav', 'mp3', 'm4a', 'ogg', 'flac'],
+            help="Upload a voice recording in WAV, MP3, M4A, OGG, or FLAC format"
         )
         
-        if audio_bytes:
-            st.success("✅ Audio recorded successfully!")
+        if uploaded_file is not None:
+            st.success(f"✅ File uploaded: {uploaded_file.name}")
+            st.info(f"📊 File size: {uploaded_file.size / 1024:.2f} KB")
             
             # Display audio player
-            st.audio(audio_bytes, format='audio/wav')
+            st.audio(uploaded_file, format=f'audio/{uploaded_file.type.split("/")[1]}')
             
-            # Transcription section
-            with st.spinner("🔄 Transcribing audio..."):
-                transcription = transcribe_audio(audio_bytes)
-                st.session_state.transcribed_text = transcription
-            
-            if transcription and not transcription.startswith("Error"):
-                st.markdown("### 📝 Transcription")
-                st.markdown(f'<div class="transcription-box">{transcription}</div>', unsafe_allow_html=True)
+            # Process button
+            if st.button("🔄 Process Audio", type="primary", use_container_width=True):
+                success, message = process_audio_file(
+                    uploaded_file,
+                    translation_direction,
+                    translation_direction,
+                    enable_summary,
+                    summary_language
+                )
                 
-                # Auto-detect language or use selection
-                if translation_direction == "Auto-detect":
-                    detected_lang = detect_language(transcription)
-                    source_lang = detected_lang
-                    target_lang = "English" if detected_lang == "Vietnamese" else "Vietnamese"
-                    st.info(f"🔍 Detected language: {source_lang}")
-                elif translation_direction == "Vietnamese → English":
-                    source_lang = "Vietnamese"
-                    target_lang = "English"
+                if success:
+                    st.success(message)
+                    st.rerun()
                 else:
-                    source_lang = "English"
-                    target_lang = "Vietnamese"
-                
-                st.session_state.current_source_lang = source_lang
-                st.session_state.current_target_lang = target_lang
-                
-                # Translate
-                with st.spinner(f"🔄 Translating to {target_lang}..."):
-                    translation = translate_text(transcription, source_lang, target_lang)
-                    st.session_state.translated_text = translation
-                
-                # Summarize if enabled
-                if enable_summary:
-                    with st.spinner("📋 Generating summary..."):
-                        if summary_language == "Same as target language":
-                            summary = summarize_text(translation, target_lang)
-                        elif summary_language == "Same as source language":
-                            summary = summarize_text(transcription, source_lang)
-                        else:
-                            summary_source = summarize_text(transcription, source_lang)
-                            summary_target = summarize_text(translation, target_lang)
-                            summary = f"**Summary in {source_lang}:**\n{summary_source}\n\n**Summary in {target_lang}:**\n{summary_target}"
-                        st.session_state.summary_text = summary
-                
-                # Add to history
-                history_item = {
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'transcription': transcription,
-                    'translation': translation,
-                    'source_lang': source_lang,
-                    'target_lang': target_lang,
-                    'success': True
-                }
-                st.session_state.audio_history.append(history_item)
-                
-            else:
-                st.error(f"❌ Transcription failed: {transcription}")
-                history_item = {
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'error': transcription,
-                    'success': False
-                }
-                st.session_state.audio_history.append(history_item)
+                    st.error(message)
+        else:
+            st.markdown("""
+            <div class="upload-box">
+                <h3>🎙️ No audio file uploaded</h3>
+                <p>Click "Browse files" above to upload your audio recording</p>
+                <p style="font-size: 0.9rem; color: #666;">
+                    Supported: WAV, MP3, M4A, OGG, FLAC<br>
+                    Max size: 50MB
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("### 🌐 Translation Result")
+        st.markdown("### 🎯 Results")
         
-        if st.session_state.translated_text:
-            st.markdown(f"**Translation ({st.session_state.current_target_lang}):**")
-            st.markdown(f'<div class="translation-box">{st.session_state.translated_text}</div>', unsafe_allow_html=True)
+        if st.session_state.transcribed_text:
+            # Display transcription
+            st.markdown("#### 📝 Transcription")
+            st.markdown(f'<div class="transcription-box">{st.session_state.transcribed_text}</div>', unsafe_allow_html=True)
             
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                st.download_button(
-                    label="💾 Save Translation",
-                    data=st.session_state.translated_text,
-                    file_name=f"translation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
-            with col_btn2:
-                combined = f"""TRANSCRIPTION ({st.session_state.current_source_lang}):
+            # Display translation
+            if st.session_state.translated_text:
+                st.markdown(f"#### 🌐 Translation ({st.session_state.current_target_lang})")
+                st.markdown(f'<div class="translation-box">{st.session_state.translated_text}</div>', unsafe_allow_html=True)
+                
+                # Export buttons
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    st.download_button(
+                        label="💾 Save Translation",
+                        data=st.session_state.translated_text,
+                        file_name=f"translation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                with col_btn2:
+                    combined = f"""TRANSCRIPTION ({st.session_state.current_source_lang}):
 {st.session_state.transcribed_text}
 
 {'='*60}
@@ -412,15 +461,15 @@ if mode == "🎙️ Voice Recording":
 TRANSLATION ({st.session_state.current_target_lang}):
 {st.session_state.translated_text}
 """
-                st.download_button(
-                    label="💾 Save Both",
-                    data=combined,
-                    file_name=f"voice_translation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
+                    st.download_button(
+                        label="💾 Save Both",
+                        data=combined,
+                        file_name=f"voice_translation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
         else:
-            st.info("🎤 Record audio to see translation here")
+            st.info("📤 Upload and process an audio file to see results here")
     
     # Summary section (full width)
     if enable_summary and st.session_state.summary_text:
@@ -656,7 +705,7 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p><strong>🎙️ Voice Translation & Transcription System</strong></p>
     <p>Powered by AI Technology | Built with Streamlit</p>
-    <p style='font-size: 0.9rem;'>Features: Voice Recording • Real-time Transcription • Translation • Summarization</p>
+    <p style='font-size: 0.9rem;'>Features: Audio Upload • Real-time Transcription • Translation • Summarization</p>
     <p style='font-size: 0.85rem; color: #999;'>Vietnamese ↔ English | Speech-to-Text | Export Capabilities</p>
 </div>
 """, unsafe_allow_html=True)
