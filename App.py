@@ -1,8 +1,6 @@
-# app.py - Main Application
+# app.py - Version WITHOUT Plotly (Simpler)
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
 from pathlib import Path
@@ -20,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS (same as before)
 st.markdown("""
     <style>
     .main {
@@ -81,35 +79,6 @@ st.markdown("""
         font-size: 0.85rem;
         font-weight: bold;
     }
-    .upvote-btn {
-        background-color: #4caf50;
-        color: white;
-        border: none;
-        padding: 8px 16px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: bold;
-    }
-    .badge {
-        display: inline-block;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.9rem;
-        font-weight: bold;
-        margin: 4px;
-    }
-    .badge-gold {
-        background-color: #ffd700;
-        color: #000;
-    }
-    .badge-silver {
-        background-color: #c0c0c0;
-        color: #000;
-    }
-    .badge-bronze {
-        background-color: #cd7f32;
-        color: #fff;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -135,8 +104,6 @@ MODEL_NAME = "openrouter/claude-sonnet-4"
 # Initialize session state
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
-if 'view_mode' not in st.session_state:
-    st.session_state.view_mode = 'browse'
 
 # Data Management Functions
 def init_excel_files():
@@ -295,13 +262,13 @@ def get_user_stats(username):
     user_ideas = ideas_df[ideas_df['submitter'] == username]
     
     stats = {
-        'points': int(user['points'].values[0]),
-        'level': int(user['level'].values[0]),
+        'points': int(user['points'].values[0]) if not user.empty else 0,
+        'level': int(user['level'].values[0]) if not user.empty else 1,
         'ideas_submitted': len(user_ideas),
         'ideas_approved': len(user_ideas[user_ideas['status'] == 'Approved']),
         'ideas_implemented': len(user_ideas[user_ideas['status'] == 'Implemented']),
-        'total_upvotes': int(user_ideas['upvotes'].sum()),
-        'badges': user['badges'].values[0] if user['badges'].values[0] else ''
+        'total_upvotes': int(user_ideas['upvotes'].sum()) if not user_ideas.empty else 0,
+        'badges': user['badges'].values[0] if not user.empty and user['badges'].values[0] else ''
     }
     
     level_num, level_name = calculate_level(stats['points'])
@@ -368,14 +335,6 @@ with st.sidebar:
             st.metric("Ideas Submitted", stats['ideas_submitted'])
             st.metric("Ideas Approved", stats['ideas_approved'])
             st.metric("Total Upvotes", stats['total_upvotes'])
-            
-            if stats['badges']:
-                st.divider()
-                st.markdown("### 🏅 Badges")
-                badges = stats['badges'].split(',')
-                for badge in badges:
-                    if badge.strip():
-                        st.markdown(f"🎖️ {badge.strip()}")
 
 # Main content
 if st.session_state.current_user is None:
@@ -391,21 +350,6 @@ if st.session_state.current_user is None:
     - 🏆 **Recognize & reward** contributors
     - 📊 **Measure ROI** of innovation initiatives
     
-    #### 🌟 Key Features:
-    - **AI-Powered Suggestions** - Smart categorization and improvement tips
-    - **Gamification** - Points, levels, badges, and leaderboards
-    - **Collaborative Evaluation** - Multi-criteria scoring system
-    - **Impact Tracking** - Measure real business value
-    - **Full Transparency** - Track ideas from submission to implementation
-    
-    #### 🚀 Get Started:
-    1. Login with your credentials (or use demo account)
-    2. Browse existing ideas or submit your own
-    3. Upvote ideas you like
-    4. Collaborate and comment
-    5. Track your points and climb the leaderboard!
-    
-    ---
     **Please login to continue →**
     """)
 
@@ -422,8 +366,6 @@ else:
     # Load data
     ideas_df = load_data(IDEAS_FILE)
     users_df = load_data(USERS_FILE)
-    comments_df = load_data(COMMENTS_FILE)
-    eval_df = load_data(EVALUATIONS_FILE)
     
     with tab1:
         st.header("📊 Innovation Dashboard")
@@ -442,26 +384,20 @@ else:
         
         st.divider()
         
-        # Charts
+        # Simple bar charts using Streamlit native
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Ideas by Status")
             if not ideas_df.empty:
                 status_counts = ideas_df['status'].value_counts()
-                fig = px.pie(values=status_counts.values, names=status_counts.index,
-                            color_discrete_sequence=px.colors.qualitative.Set3)
-                st.plotly_chart(fig, use_container_width=True)
+                st.bar_chart(status_counts)
         
         with col2:
             st.subheader("Ideas by Category")
             if not ideas_df.empty:
                 category_counts = ideas_df['category'].value_counts()
-                fig = px.bar(x=category_counts.index, y=category_counts.values,
-                           labels={'x': 'Category', 'y': 'Count'},
-                           color=category_counts.values,
-                           color_continuous_scale='Viridis')
-                st.plotly_chart(fig, use_container_width=True)
+                st.bar_chart(category_counts)
         
         st.divider()
         
@@ -538,24 +474,12 @@ else:
                         award_points(user['username'], 1, "Upvoting idea")
                         st.rerun()
                     
-                    if st.button("💬 Comment", key=f"comment_{idx}"):
-                        st.session_state.view_idea = row['id']
-                    
-                    if st.button("📖 View Details", key=f"view_{idx}"):
+                    if st.button("📖 Details", key=f"view_{idx}"):
                         with st.expander("Idea Details", expanded=True):
                             st.write(f"**Problem:** {row['problem']}")
                             st.write(f"**Solution:** {row['solution']}")
                             st.write(f"**Expected Benefits:** {row['benefits']}")
                             st.write(f"**Resources Needed:** {row['resources']}")
-                            
-                            if pd.notna(row['total_score']) and row['total_score'] > 0:
-                                st.divider()
-                                st.write("**Evaluation Scores:**")
-                                score_col1, score_col2, score_col3, score_col4 = st.columns(4)
-                                score_col1.metric("Impact", f"{row['impact_score']}/10")
-                                score_col2.metric("Feasibility", f"{row['feasibility_score']}/10")
-                                score_col3.metric("Innovation", f"{row['innovation_score']}/10")
-                                score_col4.metric("Strategy", f"{row['strategic_score']}/10")
                 
                 st.divider()
     
@@ -591,11 +515,11 @@ else:
                 height=80)
             
             benefits = st.text_area("🎯 Expected Benefits *",
-                placeholder="What value will this create? (cost savings, revenue, efficiency, etc.)",
+                placeholder="What value will this create?",
                 height=80)
             
             resources = st.text_area("🔧 Resources Needed",
-                placeholder="What resources are needed to implement this? (people, budget, time, tools)",
+                placeholder="What resources are needed to implement this?",
                 height=60)
             
             ai_help = st.checkbox("✨ Use AI to improve my idea description")
@@ -662,176 +586,61 @@ else:
                     # Award points
                     award_points(user['username'], 10, "Submitting idea")
                     
-                    # Update user stats
-                    users_df = load_data(USERS_FILE)
-                    user_idx = users_df[users_df['username'] == user['username']].index
-                    users_df.loc[user_idx, 'ideas_submitted'] += 1
-                    save_data(users_df, USERS_FILE)
-                    
                     st.success("🎉 Idea submitted successfully!")
                     st.balloons()
-                    st.info("Your idea will be reviewed by the innovation team. You'll be notified of updates!")
     
     with tab4:
         st.header("📊 Innovation Analytics")
         
-        # Time period selector
-        period = st.selectbox("Time Period", 
-            ['Last 7 Days', 'Last 30 Days', 'Last 90 Days', 'Last Year', 'All Time'])
-        
-        st.divider()
-        
-        # Submission trends
-        st.subheader("📈 Submission Trends")
         if not ideas_df.empty:
-            ideas_df['submit_date'] = pd.to_datetime(ideas_df['submit_date'])
-            ideas_over_time = ideas_df.groupby(ideas_df['submit_date'].dt.to_period('M')).size()
+            col1, col2 = st.columns(2)
             
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=ideas_over_time.index.astype(str),
-                y=ideas_over_time.values,
-                mode='lines+markers',
-                name='Ideas Submitted',
-                line=dict(color='#667eea', width=3)
-            ))
-            fig.update_layout(title="Ideas Submitted Over Time",
-                            xaxis_title="Month",
-                            yaxis_title="Number of Ideas")
-            st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("🏢 Ideas by Department")
-            if not ideas_df.empty and not users_df.empty:
-                # Merge to get departments
-                ideas_with_dept = ideas_df.merge(
-                    users_df[['username', 'department']], 
-                    left_on='submitter', 
-                    right_on='username',
-                    how='left'
-                )
-                dept_counts = ideas_with_dept['department'].value_counts()
-                
-                fig = px.bar(x=dept_counts.values, y=dept_counts.index,
-                           orientation='h',
-                           labels={'x': 'Number of Ideas', 'y': 'Department'},
-                           color=dept_counts.values,
-                           color_continuous_scale='Blues')
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            st.subheader("⚖️ Success Rate")
-            if not ideas_df.empty:
+            with col1:
+                st.subheader("Ideas Over Time")
+                ideas_df['submit_date'] = pd.to_datetime(ideas_df['submit_date'])
+                ideas_by_month = ideas_df.groupby(ideas_df['submit_date'].dt.to_period('M')).size()
+                st.line_chart(ideas_by_month)
+            
+            with col2:
+                st.subheader("Success Rate")
                 total = len(ideas_df)
                 approved = len(ideas_df[ideas_df['status'].isin(['Approved', 'In Progress', 'Implemented'])])
-                rejected = len(ideas_df[ideas_df['status'] == 'Rejected'])
-                pending = total - approved - rejected
-                
-                fig = go.Figure(data=[go.Pie(
-                    labels=['Approved/Implemented', 'Rejected', 'Pending'],
-                    values=[approved, rejected, pending],
-                    hole=0.4,
-                    marker=dict(colors=['#4caf50', '#f44336', '#ff9800'])
-                )])
-                fig.update_layout(title="Idea Approval Rate")
-                st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
-        
-        # Impact metrics
-        st.subheader("💰 Impact Metrics")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            total_savings = ideas_df['cost_savings'].fillna(0).sum()
-            st.metric("Total Cost Savings", f"${total_savings:,.0f}")
-        
-        with col2:
-            total_revenue = ideas_df['revenue_impact'].fillna(0).sum()
-            st.metric("Total Revenue Impact", f"${total_revenue:,.0f}")
-        
-        with col3:
-            avg_score = ideas_df[ideas_df['total_score'] > 0]['total_score'].mean()
-            st.metric("Avg. Idea Score", f"{avg_score:.1f}/40" if not pd.isna(avg_score) else "N/A")
+                st.metric("Approval Rate", f"{(approved/total*100):.1f}%")
+                st.progress(approved/total if total > 0 else 0)
     
     with tab5:
         st.header("🏆 Leaderboard")
         
-        # Leaderboard tabs
-        lead_tab1, lead_tab2, lead_tab3 = st.tabs(["👤 Top Contributors", "🏢 Top Departments", "💡 Top Ideas"])
+        st.subheader("🌟 Top Innovators")
         
-        with lead_tab1:
-            st.subheader("🌟 Top Innovators")
+        if not users_df.empty:
+            rankings = users_df.sort_values('points', ascending=False).head(10)
             
-            # Calculate rankings
-            if not users_df.empty:
-                rankings = users_df.sort_values('points', ascending=False).head(10)
+            for idx, (i, row) in enumerate(rankings.iterrows()):
+                col1, col2, col3, col4 = st.columns([1, 3, 2, 2])
                 
-                for idx, (i, row) in enumerate(rankings.iterrows()):
-                    col1, col2, col3, col4 = st.columns([1, 3, 2, 2])
-                    
-                    with col1:
-                        if idx == 0:
-                            st.markdown("### 🥇")
-                        elif idx == 1:
-                            st.markdown("### 🥈")
-                        elif idx == 2:
-                            st.markdown("### 🥉")
-                        else:
-                            st.markdown(f"### {idx+1}")
-                    
-                    with col2:
-                        level, level_name = calculate_level(row['points'])
-                        st.markdown(f"**{row['username']}**")
-                        st.caption(f"Level {level}: {level_name}")
-                    
-                    with col3:
-                        st.metric("Points", int(row['points']))
-                    
-                    with col4:
-                        st.metric("Ideas", int(row['ideas_submitted']))
-                    
-                    st.divider()
-        
-        with lead_tab2:
-            st.subheader("🏢 Department Rankings")
-            
-            if not ideas_df.empty and not users_df.empty:
-                # Calculate department stats
-                ideas_with_dept = ideas_df.merge(
-                    users_df[['username', 'department']], 
-                    left_on='submitter', 
-                    right_on='username',
-                    how='left'
-                )
+                with col1:
+                    if idx == 0:
+                        st.markdown("### 🥇")
+                    elif idx == 1:
+                        st.markdown("### 🥈")
+                    elif idx == 2:
+                        st.markdown("### 🥉")
+                    else:
+                        st.markdown(f"### {idx+1}")
                 
-                dept_stats = ideas_with_dept.groupby('department').agg({
-                    'id': 'count',
-                    'upvotes': 'sum',
-                    'total_score': 'mean'
-                }).round(2)
+                with col2:
+                    level, level_name = calculate_level(row['points'])
+                    st.markdown(f"**{row['username']}**")
+                    st.caption(f"Level {level}: {level_name}")
                 
-                dept_stats.columns = ['Ideas', 'Total Upvotes', 'Avg Score']
-                dept_stats = dept_stats.sort_values('Ideas', ascending=False)
+                with col3:
+                    st.metric("Points", int(row['points']))
                 
-                st.dataframe(dept_stats, use_container_width=True)
-        
-        with lead_tab3:
-            st.subheader("💡 Most Popular Ideas")
-            
-            if not ideas_df.empty:
-                top_ideas = ideas_df.sort_values('upvotes', ascending=False).head(10)
+                with col4:
+                    st.metric("Ideas", int(row['ideas_submitted']))
                 
-                for idx, row in top_ideas.iterrows():
-                    with st.expander(f"💡 {row['title']} - {row['upvotes']} upvotes"):
-                        st.write(f"**Category:** {row['category']}")
-                        st.write(f"**Submitted by:** {row['submitter']}")
-                        st.write(f"**Status:** {row['status']}")
-                        st.write(row['description'])
+                st.divider()
     
     with tab6:
         st.header("⚙️ Management Dashboard")
@@ -841,87 +650,31 @@ else:
         else:
             st.success("👑 Administrator Access")
             
-            # Management tabs
-            mgmt_tab1, mgmt_tab2, mgmt_tab3 = st.tabs(["📋 Review Ideas", "👥 Manage Users", "📊 Reports"])
+            st.subheader("Ideas Pending Review")
             
-            with mgmt_tab1:
-                st.subheader("Ideas Pending Review")
-                
-                pending = ideas_df[ideas_df['status'].isin(['New', 'Under Review'])]
-                
-                for idx, row in pending.iterrows():
-                    with st.expander(f"💡 {row['title']} - {row['status']}"):
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            st.write(f"**Category:** {row['category']}")
-                            st.write(f"**Submitted by:** {row['submitter']} on {row['submit_date']}")
-                            st.write(f"**Description:** {row['description']}")
-                            st.write(f"**Problem:** {row['problem']}")
-                            st.write(f"**Solution:** {row['solution']}")
-                            st.write(f"**Expected Benefits:** {row['benefits']}")
-                        
-                        with col2:
-                            st.metric("Upvotes", row['upvotes'])
-                            st.metric("Comments", row['comments_count'])
-                            
-                            st.divider()
-                            
-                            # Evaluation form
-                            with st.form(f"eval_form_{idx}"):
-                                st.write("**Evaluate Idea:**")
-                                impact = st.slider("Impact Score", 1, 10, 5, key=f"impact_{idx}")
-                                feasibility = st.slider("Feasibility Score", 1, 10, 5, key=f"feas_{idx}")
-                                innovation = st.slider("Innovation Score", 1, 10, 5, key=f"innov_{idx}")
-                                strategic = st.slider("Strategic Alignment", 1, 10, 5, key=f"strat_{idx}")
-                                
-                                eval_comments = st.text_area("Evaluation Comments", key=f"eval_com_{idx}")
-                                
-                                col_a, col_b = st.columns(2)
-                                with col_a:
-                                    if st.form_submit_button("✅ Approve", use_container_width=True):
-                                        ideas_df.loc[idx, 'status'] = 'Approved'
-                                        ideas_df.loc[idx, 'impact_score'] = impact
-                                        ideas_df.loc[idx, 'feasibility_score'] = feasibility
-                                        ideas_df.loc[idx, 'innovation_score'] = innovation
-                                        ideas_df.loc[idx, 'strategic_score'] = strategic
-                                        ideas_df.loc[idx, 'total_score'] = impact + feasibility + innovation + strategic
-                                        save_data(ideas_df, IDEAS_FILE)
-                                        
-                                        # Award points to submitter
-                                        award_points(row['submitter'], 100, "Idea approved")
-                                        
-                                        st.success("Idea approved!")
-                                        st.rerun()
-                                
-                                with col_b:
-                                    if st.form_submit_button("❌ Reject", use_container_width=True):
-                                        ideas_df.loc[idx, 'status'] = 'Rejected'
-                                        save_data(ideas_df, IDEAS_FILE)
-                                        st.info("Idea rejected")
-                                        st.rerun()
+            pending = ideas_df[ideas_df['status'].isin(['New', 'Under Review'])]
             
-            with mgmt_tab2:
-                st.subheader("User Management")
-                
-                st.dataframe(users_df[['username', 'email', 'department', 'role', 'points', 'level', 'ideas_submitted']], 
-                           use_container_width=True)
-            
-            with mgmt_tab3:
-                st.subheader("Generate Reports")
-                
-                if st.button("📥 Export All Ideas to Excel"):
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        ideas_df.to_excel(writer, sheet_name='Ideas', index=False)
-                        users_df.to_excel(writer, sheet_name='Users', index=False)
+            for idx, row in pending.iterrows():
+                with st.expander(f"💡 {row['title']} - {row['status']}"):
+                    st.write(f"**Category:** {row['category']}")
+                    st.write(f"**Submitted by:** {row['submitter']}")
+                    st.write(f"**Description:** {row['description']}")
                     
-                    st.download_button(
-                        label="Download Report",
-                        data=output.getvalue(),
-                        file_name=f"innovation_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ Approve", key=f"approve_{idx}"):
+                            ideas_df.loc[idx, 'status'] = 'Approved'
+                            save_data(ideas_df, IDEAS_FILE)
+                            award_points(row['submitter'], 100, "Idea approved")
+                            st.success("Idea approved!")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("❌ Reject", key=f"reject_{idx}"):
+                            ideas_df.loc[idx, 'status'] = 'Rejected'
+                            save_data(ideas_df, IDEAS_FILE)
+                            st.info("Idea rejected")
+                            st.rerun()
 
 # Footer
 st.divider()
@@ -929,6 +682,5 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p><strong>💡 Employee Idea Management System</strong></p>
     <p>Empowering Innovation | Built with ❤️ using Streamlit</p>
-    <p style='font-size: 0.85rem;'>Data stored in Excel | AI-Powered Features | Real-time Collaboration</p>
 </div>
 """, unsafe_allow_html=True)
